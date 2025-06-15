@@ -1,0 +1,177 @@
+name: System Architect Bot - Technical Planning
+on:
+  repository_dispatch:
+    types: ["🏛️ Architecture Review"]
+
+jobs:
+  system-architect:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      attestations: none
+      checks: write
+      contents: write
+      deployments: read
+      discussions: write
+      id-token: none
+      issues: write
+      models: read
+      packages: read
+      pages: read
+      pull-requests: write
+      security-events: read
+      statuses: write
+    if: github.event_name == 'repository_dispatch'
+    env:
+      ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - uses: convcha/claude-code-action@main
+        env:
+          RUST_VERSION: "stable"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: "30"
+          allowed_tools: |
+            [
+              "Bash",
+              "Glob", 
+              "Grep",
+              "LS",
+              "Read",
+              "Edit",
+              "MultiEdit",
+              "Write",
+              "Task",
+              "GitHubCreateIssue",
+              "GitHubEditIssue",
+              "GitHubCloseIssue",
+              "GitHubCreatePullRequest",
+              "GitHubEditPullRequest",
+              "GitHubGetIssue",
+              "GitHubGetPullRequest",
+              "GitHubListIssues",
+              "GitHubListPullRequests",
+              "GitHubSearchIssues",
+              "GitHubAddLabelsToIssue",
+              "GitHubRemoveLabelsFromIssue",
+              "GitHubAddAssigneesToIssue",
+              "GitHubRemoveAssigneesFromIssue",
+              "GitHubCreateIssueComment",
+              "GitHubUpdateIssueComment",
+              "GitHubDeleteIssueComment",
+              "GitHubListIssueComments",
+              "GitHubCreatePullRequestReview",
+              "GitHubCreatePullRequestReviewComment",
+              "GitHubUpdatePullRequestReviewComment",
+              "GitHubDeletePullRequestReviewComment",
+              "GitHubListPullRequestReviewComments",
+              "GitHubRequestPullRequestReviewers",
+              "GitHubRemovePullRequestReviewRequest",
+              "GitHubMergePullRequest",
+              "GitHubAddLabelsToLabelable",
+              "GitHubRemoveLabelsFromLabelable"
+            ]
+          disallowed_tools: |
+            [
+              "GitHubDeleteRepository",
+              "GitHubCreateRepository", 
+              "GitHubUpdateRepository"
+            ]
+          custom_instructions: |
+            You are a System Architect AI bot working as part of the Machiners Platoon AI development team.
+            
+            Your role is to provide technical architecture and planning for complex Rust development tasks in the rust-wc project (a word count utility).
+            
+            Key responsibilities:
+            1. **Technical Analysis**: Analyze the codebase structure and existing patterns
+            2. **Architecture Planning**: Design technical solutions that fit the Rust ecosystem
+            3. **Implementation Strategy**: Break down complex features into implementable components
+            4. **Rust Best Practices**: Ensure solutions follow Rust idioms and safety principles
+            5. **Dependency Management**: Recommend appropriate crates and libraries
+            
+            Project Context:
+            - Rust CLI application for word counting
+            - Uses getopts for command-line parsing
+            - Modular structure with separate modules for counting and display
+            
+            Focus areas:
+            - Memory safety and performance
+            - Error handling with Result types
+            - CLI interface design
+            - Testing strategies
+            - Documentation standards
+          direct_prompt: |
+            Please analyze the issue and provide technical architecture planning for this Rust project.
+            
+            Steps to follow:
+            1. Read and understand the issue requirements
+            2. Analyze the current codebase structure
+            3. Design a technical solution that:
+               - Follows Rust best practices
+               - Maintains backward compatibility
+               - Ensures memory safety and performance
+               - Fits the existing architecture
+            4. Create an implementation plan with:
+               - Module structure changes
+               - New dependencies if needed
+               - Testing approach
+               - Migration strategy if applicable
+            5. Update the issue with architectural decisions
+            6. Trigger the Engineer Bot for implementation
+
+      - name: Track Claude execution cost
+        uses: ./.github/actions/claude-result-tracker
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.client_payload.issue_number }}
+          cost-name: "System Architect Bot"
+
+      - name: Parse implementation decision
+        id: parse_implementation_decision
+        run: |
+          echo "Parsing implementation decision from issue comments..."
+          
+          # Get the latest comment from the System Architect Bot
+          LATEST_COMMENT=$(gh api "repos/${{ github.repository }}/issues/${{ env.ISSUE_NUMBER }}/comments" \
+            --jq '.[-1].body' | grep -E "(🛠️|🔄)" || echo "")
+          
+          if [[ "$LATEST_COMMENT" == *"🛠️"* ]]; then
+            echo "needs_implementation=true" >> $GITHUB_OUTPUT
+            echo "Decision: Ready for implementation"
+          elif [[ "$LATEST_COMMENT" == *"🔄"* ]]; then
+            echo "needs_refinement=true" >> $GITHUB_OUTPUT
+            echo "Decision: Needs further refinement"
+          else
+            echo "no_decision=true" >> $GITHUB_OUTPUT
+            echo "No clear implementation decision found"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Engineer Bot
+        if: success() && steps.parse_implementation_decision.outputs.needs_implementation == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event_type: "🛠️ Lets Build This",
+              client_payload: {
+                issue_number: ${{ env.ISSUE_NUMBER }}
+              }
+            });

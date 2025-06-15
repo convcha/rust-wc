@@ -1,0 +1,299 @@
+name: System Architect Bot - PR Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+  pull_request_review_comment:
+    types: [created]
+  repository_dispatch:
+    types: ["🏗️ Architect PR Review"]
+
+jobs:
+  architect-review:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      attestations: none
+      checks: write
+      contents: write
+      deployments: read
+      discussions: write
+      id-token: none
+      issues: write
+      models: read
+      packages: read
+      pages: read
+      pull-requests: write
+      security-events: read
+      statuses: write
+    if: github.event_name == 'repository_dispatch'
+    env:
+      PR_NUMBER: ${{ github.event.client_payload.pr_number || github.event.pull_request.number }}
+      ISSUE_NUMBER: ${{ github.event.client_payload.issue_number || github.event.issue.number }}
+    steps:
+      - name: Check review cycle limit
+        id: cycle_check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ env.ISSUE_NUMBER }}
+            });
+            
+            const architectReviews = comments.filter(comment => 
+              comment.body.includes('System Architect Bot - PR Review') ||
+              comment.body.includes('🏗️ Architect Review')
+            );
+            
+            const reviewCount = architectReviews.length;
+            console.log(`Current review cycle count: ${reviewCount}`);
+            
+            if (reviewCount >= 3) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ env.ISSUE_NUMBER }},
+                body: `⚠️ **Maximum Review Cycles Reached**\n\nThis issue has reached the maximum of 3 automated review cycles. Human intervention is now required.\n\n**Next Steps:**\n- Manual code review by a human developer\n- Consider breaking down the feature into smaller, more manageable parts\n- Review and adjust the implementation approach\n\n@convcha Please review this manually.`
+              });
+              
+              core.setFailed('Maximum review cycles (3) reached. Human intervention required.');
+            }
+            
+            core.setOutput('review_count', reviewCount);
+            core.setOutput('can_proceed', reviewCount < 3);
+
+      - name: Checkout repository
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run Rust quality checks
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        run: |
+          cargo fmt --check || echo "fmt_failed=true" >> $GITHUB_ENV
+          cargo clippy -- -D warnings || echo "clippy_failed=true" >> $GITHUB_ENV
+          cargo test || echo "test_failed=true" >> $GITHUB_ENV
+          cargo build --release || echo "build_failed=true" >> $GITHUB_ENV
+
+      - uses: convcha/claude-code-action@main
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        env:
+          RUST_VERSION: "stable"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: "30"
+          allowed_tools: |
+            [
+              "Bash",
+              "Glob",
+              "Grep",
+              "LS", 
+              "Read",
+              "Edit",
+              "MultiEdit",
+              "Write",
+              "Task",
+              "GitHubCreateIssue",
+              "GitHubEditIssue",
+              "GitHubCloseIssue",
+              "GitHubCreatePullRequest",
+              "GitHubEditPullRequest",
+              "GitHubGetIssue",
+              "GitHubGetPullRequest",
+              "GitHubListIssues",
+              "GitHubListPullRequests",
+              "GitHubSearchIssues",
+              "GitHubAddLabelsToIssue",
+              "GitHubRemoveLabelsFromIssue",
+              "GitHubAddAssigneesToIssue",
+              "GitHubRemoveAssigneesFromIssue",
+              "GitHubCreateIssueComment",
+              "GitHubUpdateIssueComment",
+              "GitHubDeleteIssueComment",
+              "GitHubListIssueComments",
+              "GitHubCreatePullRequestReview",
+              "GitHubCreatePullRequestReviewComment",
+              "GitHubUpdatePullRequestReviewComment",
+              "GitHubDeletePullRequestReviewComment",
+              "GitHubListPullRequestReviewComments",
+              "GitHubRequestPullRequestReviewers",
+              "GitHubRemovePullRequestReviewRequest",
+              "GitHubMergePullRequest",
+              "GitHubAddLabelsToLabelable",
+              "GitHubRemoveLabelsFromLabelable"
+            ]
+          disallowed_tools: |
+            [
+              "GitHubDeleteRepository",
+              "GitHubCreateRepository",
+              "GitHubUpdateRepository"
+            ]
+          custom_instructions: |
+            You are a System Architect AI bot performing PR reviews as part of the Machiners Platoon AI development team.
+            
+            Your role is to conduct thorough technical reviews of pull requests for the rust-wc project (a Rust word count utility).
+            
+            Key responsibilities:
+            1. **Code Quality Review**: Analyze code for Rust best practices, idioms, and safety
+            2. **Architecture Assessment**: Ensure changes align with overall system design
+            3. **Performance Analysis**: Check for potential performance issues or optimizations
+            4. **Security Review**: Identify potential security vulnerabilities
+            5. **Testing Evaluation**: Assess test coverage and quality
+            6. **Documentation Review**: Ensure proper documentation and comments
+            
+            Review Standards for Rust:
+            - Memory safety and ownership patterns
+            - Error handling with Result types
+            - Performance considerations
+            - Code organization and modularity
+            - API design and ergonomics
+            - Thread safety where applicable
+            
+            Review Process:
+            - If significant issues found: Request changes and trigger Engineer Fixes Bot
+            - If minor issues: Approve with suggestions
+            - If everything looks good: Approve for merge
+            
+            Project Context:
+            - CLI word count utility written in Rust
+            - Uses getopts for command-line parsing
+            - Focus on performance and reliability
+          direct_prompt: |
+            Please conduct a thorough technical review of this pull request.
+            
+            Steps to follow:
+            1. Analyze the PR changes and understand the implementation
+            2. Review the code against Rust best practices:
+               - Memory safety and ownership
+               - Error handling patterns
+               - Performance implications
+               - Code organization
+               - API design
+            3. Check test coverage and quality
+            4. Verify that quality checks (fmt, clippy, tests, build) pass
+            5. Provide detailed feedback in PR review:
+               - Highlight strengths
+               - Identify areas for improvement
+               - Suggest specific changes if needed
+               - Rate overall code quality
+            6. Make a decision:
+               - Approve if ready for merge
+               - Request changes if significant issues found
+               - Approve with minor suggestions for good but improvable code
+
+      - name: Track Claude execution cost
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        uses: ./.github/actions/claude-result-tracker
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          cost-name: "System Architect Bot - PR Review"
+
+      - name: Parse review decision
+        if: steps.cycle_check.outputs.can_proceed == 'true'
+        id: parse_review_decision
+        run: |
+          echo "Parsing review decision from PR reviews..."
+          
+          # Get the latest review from the System Architect Bot
+          LATEST_REVIEW=$(gh api "repos/${{ github.repository }}/pulls/${{ env.PR_NUMBER }}/reviews" \
+            --jq '.[-1].body' | grep -E "(🔧|✅|🚀)" || echo "")
+          
+          if [[ "$LATEST_REVIEW" == *"🔧"* ]]; then
+            echo "needs_fixes=true" >> $GITHUB_OUTPUT
+            echo "Decision: Changes requested"
+          elif [[ "$LATEST_REVIEW" == *"✅"* ]]; then
+            echo "approved=true" >> $GITHUB_OUTPUT
+            echo "Decision: Approved"
+          elif [[ "$LATEST_REVIEW" == *"🚀"* ]]; then
+            echo "ready_for_merge=true" >> $GITHUB_OUTPUT
+            echo "Decision: Ready for merge"
+          else
+            echo "no_decision=true" >> $GITHUB_OUTPUT
+            echo "No clear review decision found"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Engineer Fixes Bot
+        if: steps.cycle_check.outputs.can_proceed == 'true' && steps.parse_review_decision.outputs.needs_fixes == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event_type: "🔧 Fixes Required",
+              client_payload: {
+                pr_number: ${{ env.PR_NUMBER }},
+                issue_number: ${{ env.ISSUE_NUMBER }}
+              }
+            });
+
+      - name: Auto-merge if approved
+        if: steps.cycle_check.outputs.can_proceed == 'true' && steps.parse_review_decision.outputs.ready_for_merge == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          script: |
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: ${{ env.PR_NUMBER }},
+                commit_title: `Auto-merge: Closes #${{ env.ISSUE_NUMBER }}`,
+                commit_message: "Approved by System Architect Bot after thorough review.",
+                merge_method: "squash"
+              });
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ env.ISSUE_NUMBER }},
+                body: "🎉 **Feature Successfully Implemented and Merged!**\n\nThe pull request has been automatically merged after passing all quality checks and architect review.\n\n**Machiners Platoon Execution Complete** ✅"
+              });
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ env.ISSUE_NUMBER }},
+                state: "closed"
+              });
+            } catch (error) {
+              console.error("Auto-merge failed:", error);
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ env.ISSUE_NUMBER }},
+                body: `⚠️ **Auto-merge Failed**\n\nThe PR was approved but could not be automatically merged. Please merge manually.\n\nError: ${error.message}`
+              });
+            }
