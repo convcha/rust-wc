@@ -1,10 +1,10 @@
 extern crate getopts;
 use std::env;
-use std::result;
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io;
 use std::io::prelude::*;
-use std::fs::File;
+use std::result;
 use std::string;
 
 #[derive(Debug)]
@@ -23,7 +23,10 @@ impl fmt::Display for Error {
         match *self {
             Error::Usage => write!(f, "{}", Options::usage()),
             Error::Version => write!(f, "{}", Options::version()),
-            Error::Files0FromWithFiles => write!(f, "invalid arguments: can't use --files0-from with a FILEs list"),
+            Error::Files0FromWithFiles => write!(
+                f,
+                "invalid arguments: can't use --files0-from with a FILEs list"
+            ),
             Error::Getopts(ref e) => write!(f, "invalid arguments: {}", e),
             Error::Io(ref e) => write!(f, "error reading file list: {}", e),
             Error::Utf8(ref e) => write!(f, "error reading file list, invalid utf8: {}", e),
@@ -67,15 +70,17 @@ impl Options {
     }
 
     pub fn program_name() -> String {
-        env::args_os().nth(0)
+        env::args_os()
+            .nth(0)
             .unwrap_or(::std::convert::From::from("rust-wc"))
             .into_string()
             .unwrap_or("rust-wc".to_owned())
     }
 
     pub fn usage() -> String {
-        Self::options().usage(format!(
-r"Usage:
+        Self::options().usage(
+            format!(
+                r"Usage:
   {0} [OPTION]... [FILE]...
   {0} [OPTION]... --files0-from F
 
@@ -86,16 +91,21 @@ characters count is a count of valid UTF-8 encoded unicode characters.
 
 Which counts are printed can be filtered using the options below. The counts
 are always printed in the follwoing order: newline, word, character, byte,
-longest line. Counts are separated by whitespace followed by the file name."
-, Self::program_name()).as_ref())
+longest line. Counts are separated by whitespace followed by the file name.",
+                Self::program_name()
+            )
+            .as_ref(),
+        )
     }
 
     pub fn version() -> String {
         format!(
-r"{} v{}
+            r"{} v{}
 Copyright (c) 2016 Matthew Nicholson
-Ditributed under the MIT license: https://opensource.org/licenses/MIT"
-, Self::program_name(), env!("CARGO_PKG_VERSION"))
+Ditributed under the MIT license: https://opensource.org/licenses/MIT",
+            Self::program_name(),
+            env!("CARGO_PKG_VERSION")
+        )
     }
 
     #[cfg(test)]
@@ -115,16 +125,21 @@ Ditributed under the MIT license: https://opensource.org/licenses/MIT"
         opts.optflag("c", "bytes", "print the byte counts");
         opts.optflag("m", "chars", "print unicode character counts");
         opts.optflag("l", "lines", "print the newline counts");
-        opts.optflag("L", "max-line-length", "print the length of the longest line");
+        opts.optflag(
+            "L",
+            "max-line-length",
+            "print the length of the longest line",
+        );
         opts.optflag("w", "words", "print the word counts");
         opts.optopt("", "files0-from", "read input file list from the specified file containing a NUL-terminated list of file names; use - to read from stdin", "F");
         opts.optflag("h", "help", "display this help text and exit");
-        opts.optflag("v", "version", "output version information and exit");
+        opts.optflag("v", "show-version", "output version information and exit");
         opts
     }
 
     fn from_iter<I>(args: I) -> Result
-        where I: Iterator,
+    where
+        I: Iterator,
         I::Item: AsRef<OsStr>,
     {
         let options = Self::options();
@@ -138,7 +153,7 @@ Ditributed under the MIT license: https://opensource.org/licenses/MIT"
             return Err(Error::Version);
         }
 
-        let files0_from = match  matches.opt_str("files0-from") {
+        let files0_from = match matches.opt_str("files0-from") {
             Some(files0_from) => {
                 if !matches.free.is_empty() {
                     // using --files0-from with FILEs is not allowed
@@ -187,8 +202,7 @@ Ditributed under the MIT license: https://opensource.org/licenses/MIT"
 fn load_files_from(file: &str) -> result::Result<Vec<String>, Error> {
     if file == "-" {
         load_files_from_stdin()
-    }
-    else {
+    } else {
         let file = try!(File::open(file));
         let reader = io::BufReader::new(file);
         load_files_from_iter(reader.bytes())
@@ -200,7 +214,8 @@ fn load_files_from_stdin() -> result::Result<Vec<String>, Error> {
 }
 
 fn load_files_from_iter<I>(bytes: I) -> result::Result<Vec<String>, Error>
-   where I: Iterator<Item=io::Result<u8>>
+where
+    I: Iterator<Item = io::Result<u8>>,
 {
     let mut vec = Vec::new();
     let mut vec_string = Vec::new();
@@ -224,9 +239,9 @@ fn load_files_from_iter<I>(bytes: I) -> result::Result<Vec<String>, Error>
 
 #[cfg(test)]
 mod tests {
-    use super::Options;
-    use super::Error;
     use super::load_files_from_iter;
+    use super::Error;
+    use super::Options;
     use std::io;
 
     #[test]
@@ -316,9 +331,7 @@ mod tests {
     }
 
     fn vec_from_string(s: &str) -> Vec<io::Result<u8>> {
-        s.bytes()
-            .map(|c| Ok(c))
-            .collect()
+        s.bytes().map(|c| Ok(c)).collect()
     }
 
     #[test]

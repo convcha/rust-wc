@@ -31,7 +31,7 @@ Options:
                         containing a NUL-terminated list of file names; use -
                         to read from stdin
     -h, --help          display this help text and exit
-    -v, --version       output version information and exit
+    -v, --show-version  output version information and exit
 ```
 
 Differences from GNU wc
